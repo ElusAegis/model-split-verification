@@ -185,7 +185,7 @@ def main():
         # "input_R": [],
         # "input_C": [flattened_C]
     }
-    with open("input_split.json", "w") as f:
+    with open("input.json", "w") as f:
         json.dump(data, f, indent=4)
     print("🗄️ Sample input (x, R, C) saved to input.json")
 
@@ -209,10 +209,30 @@ def main():
     )
     print("🐱 ONNX model output:", onnx_out)
 
-    # 7) Attempt to run all ezkl commands in sequence, capturing their output:
+    # # 7) Attempt to run all ezkl commands in sequence, capturing their output:
+    # commands = [
+    #     (f"ezkl gen-settings --model {onnx_filename}", "GEN SETTINGS"),
+    #     (f"ezkl calibrate-settings --model {onnx_filename} --data input.json", "CALIBRATE SETTINGS"),
+    #     (f"ezkl get-srs", "GET SRS"),
+    #     (f"ezkl compile-circuit --model {onnx_filename}", "COMPILE CIRCUIT"),
+    #     ("ezkl setup", "SETUP"),
+    #     ("ezkl gen-witness --data input.json", "GENERATE WITNESS"),
+    #     ("ezkl prove", "PROVE")
+    # ]
+    #
+    # for cmd, label in commands:
+    #     run_command(cmd, label)
+    #
+    # print("🎉 [CUSTOM_MODEL] All commands completed successfully.")
+    #
+
+    # 8) Cross-check with the original model:
+    onnx_filename = "yolox_nano.onnx"
+
     commands = [
         (f"ezkl gen-settings --model {onnx_filename}", "GEN SETTINGS"),
         (f"ezkl calibrate-settings --model {onnx_filename} --data input.json", "CALIBRATE SETTINGS"),
+        (f"ezkl get-srs", "GET SRS"),
         (f"ezkl compile-circuit --model {onnx_filename}", "COMPILE CIRCUIT"),
         ("ezkl setup", "SETUP"),
         ("ezkl gen-witness --data input.json", "GENERATE WITNESS"),
@@ -222,7 +242,7 @@ def main():
     for cmd, label in commands:
         run_command(cmd, label)
 
-    print("🎉 All commands completed successfully.")
+    print("🎉 [ORIGINAL_MODEL] All commands completed successfully.")
 
 
 if __name__ == "__main__":
