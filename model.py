@@ -142,7 +142,7 @@ class SimpleCNN(nn.Module):
 
 
 def main():
-    n, m = 64, 64
+    n, m = 416, 416
     x1, y1 = 5, 5
     x2, y2 = 61, 61
 
@@ -185,7 +185,7 @@ def main():
         # "input_R": [],
         # "input_C": [flattened_C]
     }
-    with open("input.json", "w") as f:
+    with open("input_split.json", "w") as f:
         json.dump(data, f, indent=4)
     print("🗄️ Sample input (x, R, C) saved to input.json")
 

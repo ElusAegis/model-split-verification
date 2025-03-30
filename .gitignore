@@ -1,5 +1,5 @@
 /cat_recognition_model.onnx
-/input.json
+/input_split.json
 /cat_model.onnx
 /model.compiled
 /pk.key
@@ -8,3 +8,5 @@
 /witness.json
 /cat_model_dynamic_slice.onnx
 /output.json
+/input.json
+/settings_yolo_nano.json
