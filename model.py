@@ -100,19 +100,25 @@ def main():
     onnx_out = sess.run(None, {"input": arr})
     print("ONNX model output:\n", onnx_out)
 
-    # 7) Attempt to run all ezkl commands in sequence:
+    # 7) Attempt to run all ezkl commands in sequence, capturing their output:
     commands = [
-        f"ezkl gen-settings --model {onnx_filename}",
-        f"ezkl calibrate-settings --model {onnx_filename} --data input.json",
-        f"ezkl compile-circuit --model {onnx_filename}",
-        "ezkl setup",
-        "ezkl gen-witness --data input.json",
-        "ezkl prove"
+        (f"ezkl gen-settings --model {onnx_filename}", "GEN SETTINGS"),
+        (f"ezkl calibrate-settings --model {onnx_filename} --data input.json", "CALIBRATE SETTINGS"),
+        (f"ezkl compile-circuit --model {onnx_filename}", "COMPILE CIRCUIT"),
+        ("ezkl setup", "SETUP"),
+        ("ezkl gen-witness --data input.json", "GENERATE WITNESS"),
+        ("ezkl prove", "PROVE")
     ]
 
-    for cmd in commands:
-        run_command(cmd)
-    print("All commands completed successfully.")
+    for cmd, label in commands:
+        try:
+            result = subprocess.run(cmd.split(), check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            print(f"✅ PASSED {label}")
+        except subprocess.CalledProcessError as e:
+            print(f"❌ ERROR IN {label}:\n{e.stdout}\n{e.stderr}")
+            sys.exit(1)
+
+    print("🎉 All commands completed successfully.")
 
 
 if __name__ == "__main__":
