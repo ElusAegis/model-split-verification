@@ -6,6 +6,43 @@ import numpy as np
 import subprocess
 import sys
 
+def run_command(command):
+    """
+    Run a command in the shell, capturing its output.
+    Returns a tuple of (stdout, stderr).
+    """
+    result = subprocess.run(command.split(), stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    return result.stdout, result.stderr
+
+def build_row_selector(y1, y2, n):
+    """
+    Build a row-selection matrix R of shape ((y2 - y1) x n),
+    picking rows [y1 .. (y2-1)] out of [0..n-1].
+
+    y1, y2: ints (top and bottom, exclusive end)
+    n: total height
+    """
+    row_count = y2 - y1  # 56 if y1=30, y2=86
+    R = torch.zeros((row_count, n), dtype=torch.float32)
+    for i in range(row_count):
+        R[i, y1 + i] = 1.0
+    return R
+
+def build_col_selector(x1, x2, m):
+    """
+    Build a column-selection matrix C of shape (m x (x2 - x1)),
+    picking columns [x1 .. (x2-1)] out of [0..m-1].
+
+    x1, x2: ints (left and right, exclusive end)
+    m: total width
+    """
+    col_count = x2 - x1  # 56 if x1=30, x2=86
+    C = torch.zeros((m, col_count), dtype=torch.float32)
+    for i in range(col_count):
+        C[x1 + i, i] = 1.0
+    return C
+
+
 class SimpleCNN(nn.Module):
     """
     A small CNN for demonstration:
@@ -26,15 +63,36 @@ class SimpleCNN(nn.Module):
         # We'll produce 2 logits: [logit_not_cat, logit_cat]
         self.fc = nn.Linear(8 * 28 * 28, 2)
 
-    def forward(self, x):
-        # x: [C, H, W]
-        x = x.unsqueeze(0)  # shape: [1, C, H, W]
+    def forward(self, x, R, C):
 
-        # 1) Slice
-        x = x[:, :, 30:86, 30:86]  # shape: [1, C, 56, 56]
+        channels, n, m = x.shape
+
+        x_reshaped = x.view(channels, n, m)
+
+        # Multiply: (sub_n, n) @ (n, m) => (sub_n, m)
+        # then => (sub_n, m) @ (m, sub_m) => (sub_n, sub_m)
+        sub_n = R.shape[0]
+        sub_m = C.shape[1]
+
+        # Matmul for each of the (batch_size*channels) slices
+        #  => (batch_size*channels, sub_n, sub_m)
+        # We'll do it in two steps for clarity:
+        x_sub = torch.matmul(R, x_reshaped)        # shape (sub_n, m) for each slice
+        x_sub = torch.matmul(x_sub, C)            # shape (sub_n, sub_m) for each slice
+
+        # Reshape back to (batch_size, channels, sub_n, sub_m)
+        x_sub = x_sub.view(1, channels, sub_n, sub_m)
+
+        #
+        #
+        # # x: [C, H, W]
+        # x = x.unsqueeze(0)  # shape: [1, C, H, W]
+        #
+        # # 1) Slice
+        # x = x[:, :, 30:86, 30:86]  # shape: [1, C, 56, 56]
 
         # 2) Downsample
-        x = self.down_pool(x)   # shape: [1, C, 28, 28]
+        x = self.down_pool(x_sub)   # shape: [1, C, 28, 28]
 
         # 3) Convolution + ReLU
         x = self.conv(x)       # shape: [1, 8, 28, 28]
@@ -50,48 +108,54 @@ class SimpleCNN(nn.Module):
         cat_prob = probs[:, 1]      # [1]
         return cat_prob[0]          # ()
 
-def run_command(command: str):
-    """
-    Runs the command via subprocess. If it fails, prints error and exits.
-    """
-    print(f"Running: {command}")
-    try:
-        subprocess.run(command.split(), check=True)
-    except subprocess.CalledProcessError:
-        print("Command failed, stopping.")
-        sys.exit(1)
 
 def main():
+    n, m = 64, 64
+    x1, y1 = 5, 5
+    x2, y2 = 61, 61
+
+    # Build the selector matrices (crop 56x56)
+    R = build_row_selector(y1, y2, n)  # shape [56, 200]
+    C = build_col_selector(x1, x2, m)  # shape [200, 56]
+
     # 1) Instantiate the model
     model = SimpleCNN(in_channels=3)
 
-    # 2) Create sample input of shape [3, 100, 50]
-    sample_input = torch.randn(3, 160, 112)
+    # 2) Create sample input of shape [3, 200, 200]
+    sample_input = torch.randn(3, n, m)
 
-    # 3) Forward pass
-    output = model(sample_input)
+    # 3) Forward pass (note we pass R, C now!)
+    output = model(sample_input, R, C)  # <--- CHANGED
     print("Cat probability:", output.item())
 
     # 4) Export to ONNX
     onnx_filename = "cat_model.onnx"
+    # NOTE: We now have 3 inputs: x, R, C
+    # We'll name them "input_x", "input_R", "input_C" in the ONNX graph.
     torch.onnx.export(
         model,
-        (sample_input,),
+        (sample_input, R, C),            # <--- CHANGED
         onnx_filename,
-        input_names=["input"],
+        input_names=["input_x", "input_R", "input_C"],  # <--- CHANGED
         output_names=["cat_prob"],
         opset_version=13
     )
     print(f"Exported to {onnx_filename}")
 
     # 5) Create and save JSON input data
-    flattened = sample_input.reshape(-1).detach().cpu().numpy().tolist()
+    # We'll store x, R, and C all flattened, so we can feed them to onnxruntime or ezkl.
+    flattened_x = sample_input.reshape(-1).detach().cpu().numpy().tolist()
+    flattened_R = R.reshape(-1).detach().cpu().numpy().tolist()
+    flattened_C = C.reshape(-1).detach().cpu().numpy().tolist()
+
     data = {
-        "input_data": [flattened]
+        "input_data": [flattened_x,flattened_R,flattened_C],
+        # "input_R": [],
+        # "input_C": [flattened_C]
     }
     with open("input.json", "w") as f:
         json.dump(data, f, indent=4)
-    print("Sample input saved to input.json")
+    print("Sample input (x, R, C) saved to input.json")
 
     # 6) (Optional) Run a quick check in onnxruntime
     try:
@@ -100,9 +164,17 @@ def main():
         print("onnxruntime is not installed. Skipping runtime test.")
         return
 
+    # Rebuild the arrays from JSON-like structure
+    arr_x = np.array(flattened_x, dtype=np.float32).reshape(sample_input.shape)
+    arr_R = np.array(flattened_R, dtype=np.float32).reshape(R.shape)
+    arr_C = np.array(flattened_C, dtype=np.float32).reshape(C.shape)
+
     sess = onnxruntime.InferenceSession(onnx_filename)
-    arr = np.array(flattened, dtype=np.float32).reshape(sample_input.shape)
-    onnx_out = sess.run(None, {"input": arr})
+    # We feed the same 3 inputs to the model
+    onnx_out = sess.run(
+        None,
+        {"input_x": arr_x, "input_R": arr_R, "input_C": arr_C}
+    )
     print("ONNX model output:\n", onnx_out)
 
     # 7) Attempt to run all ezkl commands in sequence, capturing their output:
