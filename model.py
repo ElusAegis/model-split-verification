@@ -6,7 +6,7 @@ import torch.nn.functional as F
 class CatRecognitionModel(nn.Module):
     """
     A toy CNN model that:
-      1) Slices a region from the full image using (x1, y1, x2, y2).
+      1) Expects a sub-image of shape [3, subH, subW].
       2) Resizes it to T×T.
       3) Classifies whether it's a cat or not (binary classification).
     """
@@ -20,16 +20,14 @@ class CatRecognitionModel(nn.Module):
         # We’ll output 2 logits: [logit_not_cat, logit_cat]
         self.fc = nn.Linear(16 * T * T, 2)
 
-    def forward(self, image, coords):
+    def forward(self, sub_img):
         """
-        image: [3, H, W]  (e.g., [channels=3, height=100, width=100])
-        coords: [4]      (x1, y1, x2, y2)
+        sub_img: [3, subH, subW]
 
         Output: [2] logits
         """
-        x1, y1, x2, y2 = coords
-        # Slice the region
-        sub_img = image[:, y1:y2, x1:x2].unsqueeze(0)  # shape: [1, 3, subH, subW]
+        # Add a batch dimension
+        sub_img = sub_img.unsqueeze(0)  # shape: [1, 3, subH, subW]
 
         # Downsample/resize to T×T
         sub_img_resized = F.interpolate(sub_img, size=(self.T, self.T), mode='bilinear')
@@ -40,47 +38,44 @@ class CatRecognitionModel(nn.Module):
 
         # Flatten for the fully-connected layer
         x = x.view(x.size(0), -1)  # shape: [1, 16*T*T]
-
         out = self.fc(x)  # shape: [1, 2]
         return out[0]   # return as [2]
 
 
 def test_model():
     # 1) Create a random input image: shape [3, 100, 100]
-    #    In practice, you'd load real image data.
     image = torch.randn(3, 100, 100)
 
-    # 2) Define coords for the sub-region
-    #    For example, let's pick a rectangle:
-    coords = torch.tensor([10, 20, 40, 60], dtype=torch.int64)  # shape: [4]
+    # 2) Define coords for the sub-region (done on the host side)
+    x1, y1, x2, y2 = 10, 20, 40, 60  # example rectangle
+    sub_img = image[:, y1:y2, x1:x2]  # shape: [3, subH, subW]
 
     # 3) Instantiate our model
     T = 28  # Desired sub-chunk size
     model = CatRecognitionModel(T=T)
 
-    # 4) Run a forward pass
-    logits = model(image, coords)
+    # 4) Run a forward pass using the sub-image
+    logits = model(sub_img)
     print("Logits:", logits)  # [2]
-    probs = nn.Softmax(dim=0)(logits)  # since there's no batch dimension
+    probs = nn.Softmax(dim=0)(logits)
     print("Cat probability:", probs[1].item())
 
     # 5) Export to ONNX
     onnx_filename = "cat_recognition_model.onnx"
     torch.onnx.export(
         model,                # model to be exported
-        (image, coords),      # example inputs (tuple)
+        (sub_img,),          # single input (a tuple)
         onnx_filename,
-        input_names=["image", "coords"],
+        input_names=["sub_image"],
         output_names=["logits"],
-        opset_version=13      # or whichever opset version you require
+        opset_version=13
     )
     print(f"Exported to {onnx_filename}")
 
     # 6) Save sample input to input.json
     import json
     sample_input = {
-        "image": image.numpy().tolist(),
-        "coords": coords.numpy().tolist()
+        "sub_image": sub_img.numpy().tolist()
     }
     with open("input.json", "w") as f:
         json.dump(sample_input, f, indent=4)
@@ -95,9 +90,8 @@ def test_model():
 
     import numpy as np
     sess = onnxruntime.InferenceSession(onnx_filename)
-    image_np = image.numpy().astype(np.float32)  # shape: (3, 100, 100)
-    coords_np = coords.numpy().astype(np.int64)
-    inputs = {"image": image_np, "coords": coords_np}
+    sub_img_np = sub_img.numpy().astype(np.float32)
+    inputs = {"sub_image": sub_img_np}
     onnx_output = sess.run(None, inputs)
     print("ONNX model output:", onnx_output)
 
