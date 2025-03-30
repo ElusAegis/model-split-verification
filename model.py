@@ -6,42 +6,54 @@ import numpy as np
 import subprocess
 import sys
 
-
 class SimpleCNN(nn.Module):
     """
     A small CNN for demonstration:
-      1) Expects an input image of shape [C, H, W].
-      2) Adds a batch dimension internally.
-      3) Applies a Conv2d -> ReLU -> Flatten -> Linear pipeline -> 2 logits.
-      4) Produces just the cat probability (softmaxed).
+      1) Accepts an input of shape [C, H, W].
+      2) Upsamples to the nearest multiples of 28 (via nearest-neighbor).
+      3) Downsamples to exactly 28x28 (via AdaptiveAvgPool2d).
+      4) Applies a Conv2d -> ReLU -> Flatten -> Linear pipeline -> 2 logits.
+      5) Produces just the cat probability (softmaxed).
     """
     def __init__(self, in_channels=3):
         super(SimpleCNN, self).__init__()
-        # A single 2D conv layer for demonstration
+        # # Step 1: Upsample to a known intermediate size, e.g. (56, 56)
+
+        x_factor = 2
+        y_factor = 2
+
+        self.upsample = nn.Upsample(scale_factor=(x_factor, y_factor), mode='nearest')
+
+        # Step 2: Downsample to 28x28
+        self.down_pool = nn.AdaptiveAvgPool2d((28, 28))
+
         self.conv = nn.Conv2d(in_channels, 8, kernel_size=3, stride=1, padding=1)
         # We'll produce 2 logits: [logit_not_cat, logit_cat]
         self.fc = nn.Linear(8 * 28 * 28, 2)
 
     def forward(self, x):
-        # x has shape [C, H, W]. We add batch dimension: [1, C, H, W].
-        x = x.unsqueeze(0)
+        # x: [C, H, W]
+        x = x.unsqueeze(0)  # shape: [1, C, H, W]
 
-        # 1) Convolution + ReLU
-        x = self.conv(x)  # shape: [1, 8, H, W]
+        # 1) Upsample
+        x = self.upsample(x)    # shape: [1, C, 56, 56]
+
+        # 2) Downsample
+        x = self.down_pool(x)   # shape: [1, C, 28, 28]
+
+        # 3) Convolution + ReLU
+        x = self.conv(x)       # shape: [1, 8, 28, 28]
         x = F.relu(x)
 
-        # 2) Flatten
-        x = x.view(x.size(0), -1)  # shape: [1, 8*H*W]
+        # 4) Flatten
+        x = x.view(x.size(0), -1)   # [1, 8*28*28]
 
-        # 3) Compute logits
-        logits = self.fc(x)        # shape: [1, 2]
+        # 5) Compute logits
+        logits = self.fc(x)         # [1, 2]
+        probs = F.softmax(logits, dim=1)  # [1, 2]
 
-        # 4) Convert logits -> probabilities, shape: [1, 2]
-        probs = F.softmax(logits, dim=1)
-
-        # Return just the cat probability
-        cat_prob = probs[:, 1]     # shape: [1]
-        return cat_prob[0]         # shape: ()
+        cat_prob = probs[:, 1]      # [1]
+        return cat_prob[0]          # ()
 
 def run_command(command: str):
     """
@@ -54,13 +66,12 @@ def run_command(command: str):
         print("Command failed, stopping.")
         sys.exit(1)
 
-
 def main():
     # 1) Instantiate the model
     model = SimpleCNN(in_channels=3)
 
-    # 2) Create sample input: shape [3, 28, 28]
-    sample_input = torch.randn(3, 28, 28)
+    # 2) Create sample input of shape [3, 100, 50]
+    sample_input = torch.randn(3, 112, 112)
 
     # 3) Forward pass
     output = model(sample_input)
@@ -79,7 +90,6 @@ def main():
     print(f"Exported to {onnx_filename}")
 
     # 5) Create and save JSON input data
-    # We flatten the input, but store it as a nested list: [[...values...]]
     flattened = sample_input.reshape(-1).detach().cpu().numpy().tolist()
     data = {
         "input_data": [flattened]
