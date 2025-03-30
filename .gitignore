@@ -1,2 +1,8 @@
 /cat_recognition_model.onnx
 /input.json
+/cat_model.onnx
+/model.compiled
+/pk.key
+/proof.json
+/vk.key
+/witness.json
