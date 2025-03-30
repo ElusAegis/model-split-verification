@@ -1,3 +1,5 @@
+import sys
+
 import numpy as np
 import cv2
 import urllib.request
@@ -21,15 +23,15 @@ COCO_CLASSES = [
 ]
 
 MODEL_URL = "http://github.com/Megvii-BaseDetection/YOLOX/releases/download/0.1.1rc0/yolox_tiny.onnx"
-MODEL_PATH = "yolox_nano.onnx"
+MODEL_PATH = "yolox_tiny.onnx"
 
 IMAGE_URL = "http://images.cocodataset.org/val2017/000000039769.jpg"
 IMAGE_PATH = "backup_cat_416x416.jpg"  # A local file name to cache the image.
 
 # The model is trained around a default input size of 416x416 (for YOLOX Nano).
-INPUT_WIDTH  = 416
-INPUT_HEIGHT = 416
-
+INPUT_WIDTH, INPUT_HEIGHT = 416, 416  # YOLOX Tiny typically uses 416x416
+CONF_THRESHOLD = 0.001
+IOU_THRESHOLD  = 0.01
 
 # -----------------------------------------------------------
 # 2) Utility function: download the model/image if not cached
@@ -153,60 +155,37 @@ def non_max_suppression(boxes, scores, iou_threshold=0.45):
     return keep
 
 
-def main():
-    # -----------------------------------------------------------
-    # A) Download/copy model & image locally if not present
-    # -----------------------------------------------------------
-    ensure_file_downloaded(MODEL_URL, MODEL_PATH)
-    ensure_file_downloaded(IMAGE_URL, IMAGE_PATH)
-
-    # -----------------------------------------------------------
-    # B) Load the image and prepare input
-    # -----------------------------------------------------------
-    original_image = np.array(Image.open(IMAGE_PATH).convert("RGB"))
+def run_yolo_on_image(session, image_path):
+    """
+    Runs YOLO on a single image using the already-loaded onnxruntime session.
+    Returns True if 'cat' is detected above the confidence threshold, else False.
+    """
+    # 1) Load and preprocess the image
+    original_image = np.array(Image.open(image_path).convert("RGB"))
     orig_h, orig_w = original_image.shape[:2]
 
-    # Resize/normalize for YOLOX
+    # Resize/normalize
     input_image = cv2.resize(original_image, (INPUT_WIDTH, INPUT_HEIGHT))
     input_image = input_image.astype(np.float32) / 255.0
-    # NCHW
+    # NCHW shape
     input_image = np.transpose(input_image, (2, 0, 1))[None, ...]
 
-    # -----------------------------------------------------------
-    # C) Initialize onnxruntime session & run inference
-    # -----------------------------------------------------------
-    session = ort.InferenceSession(MODEL_PATH)
+    # 2) Run the inference
     outputs = session.run(None, {session.get_inputs()[0].name: input_image})
-    # YOLOX output shape will be [3549, 85] for (416x416) with strides [8,16,32]
+    # YOLOX output shape is (1, 3549, 85) for tiny at 416x416, so squeeze out batch dim
+    raw_preds = outputs[0].squeeze(0)  # now (3549, 85)
 
-    raw_preds = outputs[0]  # shape: (3549, 85)
-    raw_preds = raw_preds.squeeze(0)  # now shape = (3549, 85)
-
-    # -----------------------------------------------------------
-    # D) Decode the raw predictions to XYXY boxes
-    # -----------------------------------------------------------
-
+    # 3) Decode raw predictions
     decoded_preds = decode_outputs(raw_preds, (INPUT_HEIGHT, INPUT_WIDTH), p6=False)
-    # decode_outputs returns shape [3549, 85], but now the first 4 columns are [cx, cy, w, h] in pixel coords
-
-    # Split the columns
     boxes_xywh = decoded_preds[:, 0:4]  # [cx, cy, w, h]
-    obj_conf    = decoded_preds[:, 4]   # object confidence
-    class_probs = decoded_preds[:, 5:]  # per-class probabilities
+    obj_conf = decoded_preds[:, 4]  # object confidence
+    class_probs = decoded_preds[:, 5:]  # shape (N, 80)
 
-    print("boxes_xywh.shape =", boxes_xywh.shape)  # (3549, 4)
-    print("obj_conf.shape =", obj_conf.shape)  # (3549,)
-    print("class_probs.shape =", class_probs.shape)  # (3549, 80)
-
-    # Convert to [x1,y1,x2,y2]
     boxes_xyxy = xywh2xyxy(boxes_xywh)
 
-    # -----------------------------------------------------------
-    # E) For each candidate: final score = obj_conf * class_conf
-    # -----------------------------------------------------------
+    # 4) Compute final scores = obj_conf * class_conf
     final_scores = []
     final_class_ids = []
-
     for i in range(len(boxes_xyxy)):
         class_id = np.argmax(class_probs[i])
         class_conf = class_probs[i][class_id]
@@ -217,49 +196,79 @@ def main():
     final_scores = np.array(final_scores)
     final_class_ids = np.array(final_class_ids)
 
-    # Filter by some confidence threshold
-    conf_thres = 0.3
-    mask = final_scores >= conf_thres
-
+    # Filter by confidence threshold
+    mask = final_scores >= CONF_THRESHOLD
     boxes_xyxy = boxes_xyxy[mask]
     scores = final_scores[mask]
     class_ids = final_class_ids[mask]
 
+    # If no predictions survive, definitely no cat
     if len(scores) == 0:
-        print("No predictions above confidence threshold.")
-        return
+        return False, None, None
 
-    # -----------------------------------------------------------
-    # F) Perform Non-Maximum Suppression
-    # -----------------------------------------------------------
-    keep_indices = non_max_suppression(boxes_xyxy, scores, iou_threshold=0.45)
+    # 5) Non-Max Suppression
+    keep_indices = non_max_suppression(boxes_xyxy, scores, iou_threshold=IOU_THRESHOLD)
     boxes_xyxy = boxes_xyxy[keep_indices]
     scores = scores[keep_indices]
     class_ids = class_ids[keep_indices]
 
-    # -----------------------------------------------------------
-    # G) Print top detection (highest confidence)
-    #    Note: The boxes are in the resized 416x416 space. You can
-    #    scale them back to the original image if needed.
-    # -----------------------------------------------------------
-    max_id = np.argmax(scores)
-    box = boxes_xyxy[max_id]
-    cat = COCO_CLASSES[class_ids[max_id]]
-    sc = scores[max_id]
+    # 6) Check if any final detection is "cat" (index in COCO_CLASSES)
+    for i in range(len(scores)):
+        print(f"Detected: {COCO_CLASSES[class_ids[i]]} with confidence {scores[i]:.2f}")
+        if COCO_CLASSES[class_ids[i]] == "cat":
+            # Found a cat!
 
-    # Scale back to original image coordinates if you want:
-    # scale_x = orig_w / float(INPUT_WIDTH)
-    # scale_y = orig_h / float(INPUT_HEIGHT)
-    # x1, y1, x2, y2 = box
-    # x1 *= scale_x
-    # x2 *= scale_x
-    # y1 *= scale_y
-    # y2 *= scale_y
+            max_id = np.argmax(scores)
+            box = boxes_xyxy[max_id]
+            cat = COCO_CLASSES[class_ids[max_id]]
+            sc = scores[max_id]
 
-    print("Top prediction:")
-    print(f" Class:       {cat}")
-    print(f" Confidence:  {sc:.3f}")
-    print(f" BBox (x1,y1,x2,y2) in 416x416 space: {box}")
+            return True, box, sc
+
+    return False, None, None
+
+
+def main():
+    # 1) Ensure model is downloaded, then load with onnxruntime
+    ensure_file_downloaded(MODEL_URL, MODEL_PATH)
+    session = ort.InferenceSession(MODEL_PATH)
+
+    # 2) Retrieve *all* images in the val2017 folder
+    #    Let's assume there's a folder called "val2017" in the current working dir
+    val_folder = "val2017"
+    all_files = sorted(os.listdir(val_folder))  # Not strictly needed to sort, but let's do it
+    image_paths = [os.path.join(val_folder, f)
+                   for f in all_files
+                   if f.lower().endswith(".jpg") or f.lower().endswith(".jpeg")]
+
+    total_imgs = len(image_paths)
+    if total_imgs == 0:
+        print("No .jpg images found in val2017 folder.")
+        return
+
+    # 3) Iterate through images, show progress, stop if cat is found
+    print(f"Scanning {total_imgs} images in {val_folder}...")
+    for idx, img_path in enumerate(image_paths, start=1):
+        # Print a "progress bar" style line that overwrites itself
+        sys.stdout.write(f"\rChecking image {idx}/{total_imgs} ...")
+        sys.stdout.flush()
+
+        (cat_found, box, sc) = run_yolo_on_image(session, img_path)
+        if cat_found:
+            # Move to a new line before we do the next print
+            sys.stdout.write("\n")
+            sys.stdout.flush()
+            print(f"Cat detected in: {img_path} (stopping now).")
+
+            print("Top prediction:")
+            print(f" Confidence:  {sc:.3f}")
+            print(f" BBox (x1,y1,x2,y2) in 416x416 space: {box}")
+            break
+    else:
+        # If we never break (no cat in entire list), show final result
+        sys.stdout.write("\n")
+        sys.stdout.flush()
+        print("No cat was detected in any of the images from val2017.")
 
 
 if __name__ == "__main__":
