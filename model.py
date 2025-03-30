@@ -17,16 +17,11 @@ class SimpleCNN(nn.Module):
     """
     def __init__(self, in_channels=3):
         super(SimpleCNN, self).__init__()
-        # # Step 1: Upsample to a known intermediate size, e.g. (56, 56)
 
-        x_factor = 2
-        y_factor = 2
-
-        self.upsample = nn.Upsample(scale_factor=(x_factor, y_factor), mode='nearest')
-
-        # Step 2: Downsample to 28x28
+        # Step 1: Downsample to 28x28
         self.down_pool = nn.AdaptiveAvgPool2d((28, 28))
 
+        # Step 2: Convolution
         self.conv = nn.Conv2d(in_channels, 8, kernel_size=3, stride=1, padding=1)
         # We'll produce 2 logits: [logit_not_cat, logit_cat]
         self.fc = nn.Linear(8 * 28 * 28, 2)
@@ -35,8 +30,8 @@ class SimpleCNN(nn.Module):
         # x: [C, H, W]
         x = x.unsqueeze(0)  # shape: [1, C, H, W]
 
-        # 1) Upsample
-        x = self.upsample(x)    # shape: [1, C, 56, 56]
+        # 1) Slice
+        x = x[:, :, 30:86, 30:86]  # shape: [1, C, 56, 56]
 
         # 2) Downsample
         x = self.down_pool(x)   # shape: [1, C, 28, 28]
@@ -71,7 +66,7 @@ def main():
     model = SimpleCNN(in_channels=3)
 
     # 2) Create sample input of shape [3, 100, 50]
-    sample_input = torch.randn(3, 112, 112)
+    sample_input = torch.randn(3, 160, 112)
 
     # 3) Forward pass
     output = model(sample_input)
