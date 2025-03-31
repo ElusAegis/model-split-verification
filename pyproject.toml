@@ -3,9 +3,9 @@ name = "model-split-verification"
 version = "0.1.0"
 requires-python = ">=3.12,<3.13"
 dependencies = [
-    "torch==1.13.1+cpu",
-    "numpy==1.24.0",
-    "onnxruntime==1.13.1"
+    "torch==2.6.0+cpu",
+    "numpy==2.2.4",
+    "onnxruntime==1.21.0"
 ]
 
 [tool.pip]
