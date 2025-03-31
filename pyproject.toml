@@ -3,10 +3,7 @@ name = "model-split-verification"
 version = "0.1.0"
 requires-python = ">=3.12,<3.13"
 dependencies = [
-    "torch==2.6.0+cpu",
+    "torch==2.6.0",
     "numpy==2.2.4",
     "onnxruntime==1.21.0"
 ]
-
-[tool.pip]
-extra-index-url = ["https://download.pytorch.org/whl/cpu"]
