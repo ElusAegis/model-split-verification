@@ -209,22 +209,22 @@ def main():
     )
     print("🐱 ONNX model output:", onnx_out)
 
-    # # 7) Attempt to run all ezkl commands in sequence, capturing their output:
-    # commands = [
-    #     (f"ezkl gen-settings --model {onnx_filename}", "GEN SETTINGS"),
-    #     (f"ezkl calibrate-settings --model {onnx_filename} --data input.json", "CALIBRATE SETTINGS"),
-    #     (f"ezkl get-srs", "GET SRS"),
-    #     (f"ezkl compile-circuit --model {onnx_filename}", "COMPILE CIRCUIT"),
-    #     ("ezkl setup", "SETUP"),
-    #     ("ezkl gen-witness --data input.json", "GENERATE WITNESS"),
-    #     ("ezkl prove", "PROVE")
-    # ]
-    #
-    # for cmd, label in commands:
-    #     run_command(cmd, label)
-    #
-    # print("🎉 [CUSTOM_MODEL] All commands completed successfully.")
-    #
+    # 7) Attempt to run all ezkl commands in sequence, capturing their output:
+    commands = [
+        (f"ezkl gen-settings --model {onnx_filename}", "GEN SETTINGS"),
+        (f"ezkl calibrate-settings --model {onnx_filename} --data input.json", "CALIBRATE SETTINGS"),
+        (f"ezkl get-srs", "GET SRS"),
+        (f"ezkl compile-circuit --model {onnx_filename}", "COMPILE CIRCUIT"),
+        ("ezkl setup", "SETUP"),
+        ("ezkl gen-witness --data input.json", "GENERATE WITNESS"),
+        ("ezkl prove", "PROVE")
+    ]
+
+    for cmd, label in commands:
+        run_command(cmd, label)
+
+    print("🎉 [CUSTOM_MODEL] All commands completed successfully.")
+
 
     # 8) Cross-check with the original model:
     onnx_filename = "yolox_nano.onnx"
